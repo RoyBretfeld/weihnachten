@@ -7,7 +7,6 @@
     <!-- Lade Firebase Module über CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // Wichtig: signInWithCustomToken wird entfernt, da es nur im Canvas funktioniert
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -27,36 +26,30 @@
         };
         // --------------------------------------------------------------------------------
 
-        // Initialisiere App, Auth und Firestore
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app); // Fügt die App-Instanz explizit an getAuth an
-        const db = getFirestore(app); // Fügt die App-Instanz explizit an getFirestore an
+        // --- Globale Variablen (werden in main() initialisiert) ---
+        let auth;
+        let db;
 
-        // --- Globale Objekte und Funktionen ---
-        window.app = app;
-        window.auth = auth;
-        window.db = db;
-        
         // Helper-Funktion zur Generierung des eindeutigen Schlüssels für Firestore
         window.generateKey = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-        // Liste der Lokale
+        // Liste der Lokale (MIT GOOGLE MAPS/BILDER LINKS)
         window.lokale = [
-            { name: "Altmarktkeller – Dresdner Bierhaus", adresse: "Altmarkt 4", tipp: "Keller- oder Schwarzbier." },
-            { name: "Watzke Brauereiausschank am Ring", adresse: "Dr.-Külz-Ring 9", tipp: "Hausgebrautes (Pils/Spezial)." },
-            { name: "Kutscherschänke", adresse: "Münzgasse 10", tipp: "Landbier; dazu z. B. Sauerbraten teilen." },
-            { name: "Hofbräu zur Frauenkirche", adresse: "Frauenstraße 16", tipp: "Helles/Weißbier (klein, wenn viele Stopps)." },
-            { name: "Freiberger Schankhaus", adresse: "Neumarkt 8", tipp: "Freiberger Pils/Schank." },
-            { name: "DRESDEN 1900 – Museumsgastronomie", adresse: "An der Frauenkirche 20", tipp: "„Dresdner Batzen“ oder Fassbier." },
-            { name: "Kurfürstenschänke anno 1708", adresse: "An der Frauenkirche 13", tipp: "Quarkkeulchen als süßer Snack." },
-            { name: "Pulverturm an der Frauenkirche", adresse: "An der Frauenkirche 12", tipp: "Deftiges unter Gewölben." },
-            { name: "Augustiner an der Frauenkirche", adresse: "Rampische Str. 2 / am Neumarkt", tipp: "Hell oder Edelstoff." },
-            { name: "Sophienkeller im Taschenbergpalais", adresse: "Taschenberg 3", tipp: "Sächsische Klassiker im barocken Gewölbe." }
+            // Die Google Maps URLs verweisen auf die Suche oder den direkten Eintrag
+            { name: "Altmarktkeller – Dresdner Bierhaus", adresse: "Altmarkt 4", tipp: "Keller- oder Schwarzbier.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Altmarktkeller+Dresdner+Bierhaus" },
+            { name: "Watzke Brauereiausschank am Ring", adresse: "Dr.-Külz-Ring 9", tipp: "Hausgebrautes (Pils/Spezial).", googleUrl: "https://www.google.com/maps/search/?api=1&query=Watzke+Brauereiausschank+am+Ring+Dresden" },
+            { name: "Kutscherschänke", adresse: "Münzgasse 10", tipp: "Landbier; dazu z. B. Sauerbraten teilen.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Kutschersch%C3%A4nke+Dresden" },
+            { name: "Hofbräu zur Frauenkirche", adresse: "Frauenstraße 16", tipp: "Helles/Weißbier (klein, wenn viele Stopps).", googleUrl: "https://www.google.com/maps/search/?api=1&query=Hofbr%C3%A4u+zur+Frauenkirche+Dresden" },
+            { name: "Freiberger Schankhaus", adresse: "Neumarkt 8", tipp: "Freiberger Pils/Schank.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Freiberger+Schankhaus+Dresden" },
+            { name: "DRESDEN 1900 – Museumsgastronomie", adresse: "An der Frauenkirche 20", tipp: "„Dresdner Batzen“ oder Fassbier.", googleUrl: "https://www.google.com/maps/search/?api=1&query=DRESDEN+1900+Museumsgastronomie" },
+            { name: "Kurfürstenschänke anno 1708", adresse: "An der Frauenkirche 13", tipp: "Quarkkeulchen als süßer Snack.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Kurf%C3%BCrstensch%C3%A4nke+anno+1708+Dresden" },
+            { name: "Pulverturm an der Frauenkirche", adresse: "An der Frauenkirche 12", tipp: "Deftiges unter Gewölben.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Pulverturm+an+der+Frauenkirche+Dresden" },
+            { name: "Augustiner an der Frauenkirche", adresse: "Rampische Str. 2 / am Neumarkt", tipp: "Hell oder Edelstoff.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Augustiner+an+der+Frauenkirche+Dresden" },
+            { name: "Sophienkeller im Taschenbergpalais", adresse: "Taschenberg 3", tipp: "Sächsische Klassiker im barocken Gewölbe.", googleUrl: "https://www.google.com/maps/search/?api=1&query=Sophienkeller+im+Taschenbergpalais+Dresden" }
         ];
 
         // Die Firestore Collection/Document Pfade
         const votingCollectionPath = `/artifacts/${appId}/public/data/gf_voting`;
-        const votingDocRef = doc(db, votingCollectionPath, 'voting_status');
 
         // Funktion zum Aktualisieren der Anzeige
         window.updateDisplay = function(votes) {
@@ -69,7 +62,7 @@
                 }
             });
         }
-
+        
         // Funktion zur Initialisierung der Tabelle und der Event Listener
         window.initializeTable = function() {
             const tbody = document.getElementById('lokalitaeten-body');
@@ -86,6 +79,7 @@
                             <span class="stimmen-anzahl" id="stimmen_${key}">0</span> Stimmen
                         </div>
                     </td>
+                    <td><a class="image-link" href="${lokal.googleUrl}" target="_blank" rel="noopener noreferrer">Ansicht (Google)</a></td>
                 `;
             });
 
@@ -105,6 +99,7 @@
         // Funktion zur Handhabung der Stimmabgabe
         window.handleVote = async function(key, button) {
             button.disabled = true;
+            const votingDocRef = doc(db, votingCollectionPath, 'voting_status');
             try {
                 // Initialisiert/Update den Zähler mithilfe der increment-Funktion
                 await setDoc(votingDocRef, {
@@ -122,6 +117,7 @@
 
         // Start der Echtzeit-Überwachung (onSnapshot)
         window.startRealtimeListener = function() {
+            const votingDocRef = doc(db, votingCollectionPath, 'voting_status');
             onSnapshot(votingDocRef, (docSnapshot) => {
                 if (docSnapshot.exists()) {
                     // Aktualisiere die Anzeige mit den aktuellen Daten
@@ -132,14 +128,14 @@
                     window.lokale.forEach(lokal => {
                         initialVotes[window.generateKey(lokal.name)] = 0;
                     });
+                    // Setze Initialdaten (dies erfordert Schreibrechte!)
                     setDoc(votingDocRef, initialVotes).catch(e => console.error("Initialisierungsfehler:", e));
                 }
             }, (error) => {
                 console.error("Fehler beim Echtzeit-Listener:", error);
-                window.showMessage("Konnte keine Live-Verbindung zur Abstimmung aufbauen. Prüfen Sie die Internetverbindung.", false);
+                window.showMessage("Konnte keine Live-Verbindung zur Abstimmung aufbauen. Prüfen Sie die Internetverbindung und die Firestore-Regeln.", false);
             });
         }
-
 
         // Visuelles Feedback
         window.showMessage = function(msg, isSuccess = true) {
@@ -158,23 +154,44 @@
             }, 3000);
         }
 
-        // --- Start der Anwendung (Vereinfachte Auth für externes Hosting) ---
-        
-        // Initialisierungs-Listener, der wartet, bis die Anmeldung abgeschlossen ist
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                // Benutzer ist angemeldet (anonym)
-                window.initializeTable();
-                window.startRealtimeListener(); // Starte den Echtzeit-Listener
-            } else {
-                // Wenn die Authentifizierung fehlschlägt, zeige eine Fehlermeldung
-                document.getElementById('loading-message').textContent = "Fehler: Anmeldung zur Datenbank fehlgeschlagen. Abstimmung nicht möglich.";
+        // --- Start der Hauptanwendung ---
+        function main() {
+            try {
+                // Initialisiere App, Auth und Firestore
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app); 
+                db = getFirestore(app); 
+
+                // Initialisierungs-Listener, der wartet, bis die Anmeldung abgeschlossen ist
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        // Benutzer ist angemeldet (anonym). Starte das UI.
+                        window.initializeTable();
+                        window.startRealtimeListener(); 
+                    } else {
+                        // Fehler beim Einloggen (Passiert, wenn Auth Service nicht aktiv ist)
+                        document.getElementById('loading-message').textContent = "Fehler: Anmeldung zur Datenbank fehlgeschlagen. Abstimmung nicht möglich. (Auth Service nicht aktiv?)";
+                        document.getElementById('loading-message').style.color = '#f44336';
+                    }
+                });
+
+                // Startet die anonyme Anmeldung sofort
+                signInAnonymously(auth);
+
+            } catch (error) {
+                console.error("SCHWERER FEHLER BEI FIREBASE INITIALISIERUNG:", error);
+                document.getElementById('loading-message').textContent = "SCHWERER FEHLER: Die Firebase-Konfiguration ist ungültig. Bitte prüfen Sie die Konsolen-Logs.";
                 document.getElementById('loading-message').style.color = '#f44336';
             }
-        });
+        }
 
-        // Startet die anonyme Anmeldung sofort
-        signInAnonymously(auth);
+        // Prüfe, ob die Konfiguration überhaupt vorhanden ist, bevor main() gestartet wird
+        if (firebaseConfig.apiKey && firebaseConfig.projectId) {
+            main();
+        } else {
+            document.getElementById('loading-message').textContent = "FEHLER: Die Firebase-Konfiguration ist fehlerhaft. Bitte prüfen Sie die Zeilen 11-18 im Code.";
+            document.getElementById('loading-message').style.color = '#f44336';
+        }
     </script>
     <style>
         /* Basis-Styling */
@@ -286,6 +303,12 @@
             font-size: 1.1em;
         }
 
+        /* Styling für Bildlink */
+        .image-link {
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
         /* Hinweis-Stil */
         .hinweis {
             margin-top: 30px;
@@ -344,6 +367,7 @@
                 <th>Adresse</th>
                 <th>Tipp (Getränk & Happen)</th>
                 <th>Abstimmung & Stand</th>
+                <th>Ansicht</th>
             </tr>
         </thead>
         <tbody id="lokalitaeten-body">
