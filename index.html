@@ -1,105 +1,181 @@
-<?php
-// -----------------------------------------------------------------------------
-// PHP-LOGIK FÜR ZENTRALE ABSTIMMUNG (READ/WRITE VON votes.json)
-// -----------------------------------------------------------------------------
-
-// Wichtig: Dateipfad für die Abstimmungsdaten (im gleichen Verzeichnis wie index.php)
-$data_file = 'votes.json';
-
-/**
- * Definiert die anfängliche Datenstruktur. Die Schlüssel MÜSSEN mit der JS-Funktion
- * generateKey() im HTML-Teil übereinstimmen.
- */
-function initialize_data(): array {
-    return [
-        "altmarktkellerdresdnerbierhaus" => 0,
-        "watzkebrauereiausschankamring" => 0,
-        "kutscherschnke" => 0,
-        "hofbruzurfrauenkirche" => 0,
-        "freibergerschankhaus" => 0,
-        "dresden1900museumsgastronomie" => 0,
-        "kurfrstenschankeanno1708" => 0,
-        "pulverturmannderfrauenkirche" => 0,
-        "augustineranderfrauenkirche" => 0,
-        "sophienkellerimtaschenbergpalais" => 0,
-    ];
-}
-
-/**
- * Liest die aktuellen Stimmen aus der JSON-Datei.
- */
-function get_votes(): array {
-    global $data_file;
-    if (!file_exists($data_file) || filesize($data_file) === 0) {
-        return initialize_data();
-    }
-    $content = file_get_contents($data_file);
-    // Daten aus JSON lesen, bei Fehler initialisieren
-    $data = json_decode($content, true);
-    return is_array($data) ? $data : initialize_data();
-}
-
-/**
- * Speichert die aktualisierten Stimmen in die JSON-Datei.
- * Verwendet einen Dateilock, um gleichzeitige Schreibzugriffe zu verhindern.
- */
-function save_votes(array $data): bool {
-    global $data_file;
-    $lock_file = $data_file . '.lock';
-    
-    // Versuche, eine exklusive Sperre zu erhalten
-    $fp = @fopen($lock_file, 'w');
-    if ($fp && flock($fp, LOCK_EX)) {
-        $result = file_put_contents($data_file, json_encode($data, JSON_PRETTY_PRINT));
-        flock($fp, LOCK_UN);
-        fclose($fp);
-        @unlink($lock_file); // Lock-Datei löschen
-        return $result !== false;
-    } else {
-        if ($fp) fclose($fp);
-        return false;
-    }
-}
-
-// -----------------------------------------------------------------------------
-// API-Endpunkt für Votings
-// -----------------------------------------------------------------------------
-
-// Prüft, ob ein POST-Request für eine neue Stimme vorliegt.
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vote_key'])) {
-    header('Content-Type: application/json');
-
-    $vote_key = $_POST['vote_key'];
-    $votes = get_votes();
-
-    if (isset($votes[$vote_key])) {
-        $votes[$vote_key]++;
-        if (save_votes($votes)) {
-            echo json_encode(['success' => true, 'votes' => $votes]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['success' => false, 'message' => 'Speichern fehlgeschlagen. Prüfen Sie die Schreibrechte.']);
-        }
-    } else {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Ungültiger Abstimmungsschlüssel.']);
-    }
-    exit;
-}
-
-// Wenn kein POST-Request, hole die Initialdaten für die HTML-Anzeige.
-$initial_votes = get_votes();
-
-// -----------------------------------------------------------------------------
-// HTML-Ausgabe (Der PHP-Block wird hier beendet und die HTML-Ausgabe beginnt)
-// -----------------------------------------------------------------------------
-?>
 <!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Treffen der Ehemaligen Globalfoundries: Lokalauswahl</title>
+    <!-- Lade Firebase Module über CDN -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Wichtig: signInWithCustomToken wird entfernt, da es nur im Canvas funktioniert
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // VOM NUTZER EINGEFÜGTE FIREBASE KONFIGURATION
+        // --------------------------------------------------------------------------------
+        // ACHTUNG: Dies sind Ihre echten Firebase-Daten! Nicht ändern.
+        const appId = 'weihnachten-d4554'; 
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyBuSJDRAbrNqLIXulWPHY9n4xlw3T3f0T8",
+            authDomain: "weihnachten-d4554.firebaseapp.com",
+            projectId: "weihnachten-d4554",
+            storageBucket: "weihnachten-d4554.firebasestorage.app",
+            messagingSenderId: "403461533541",
+            appId: "1:403461533541:web:ec3591aefaa8058c7ffb8c",
+            measurementId: "G-KDPKJTRHMK"
+        };
+        // --------------------------------------------------------------------------------
+
+        // Initialisiere App, Auth und Firestore
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app); // Fügt die App-Instanz explizit an getAuth an
+        const db = getFirestore(app); // Fügt die App-Instanz explizit an getFirestore an
+
+        // --- Globale Objekte und Funktionen ---
+        window.app = app;
+        window.auth = auth;
+        window.db = db;
+        
+        // Helper-Funktion zur Generierung des eindeutigen Schlüssels für Firestore
+        window.generateKey = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // Liste der Lokale
+        window.lokale = [
+            { name: "Altmarktkeller – Dresdner Bierhaus", adresse: "Altmarkt 4", tipp: "Keller- oder Schwarzbier." },
+            { name: "Watzke Brauereiausschank am Ring", adresse: "Dr.-Külz-Ring 9", tipp: "Hausgebrautes (Pils/Spezial)." },
+            { name: "Kutscherschänke", adresse: "Münzgasse 10", tipp: "Landbier; dazu z. B. Sauerbraten teilen." },
+            { name: "Hofbräu zur Frauenkirche", adresse: "Frauenstraße 16", tipp: "Helles/Weißbier (klein, wenn viele Stopps)." },
+            { name: "Freiberger Schankhaus", adresse: "Neumarkt 8", tipp: "Freiberger Pils/Schank." },
+            { name: "DRESDEN 1900 – Museumsgastronomie", adresse: "An der Frauenkirche 20", tipp: "„Dresdner Batzen“ oder Fassbier." },
+            { name: "Kurfürstenschänke anno 1708", adresse: "An der Frauenkirche 13", tipp: "Quarkkeulchen als süßer Snack." },
+            { name: "Pulverturm an der Frauenkirche", adresse: "An der Frauenkirche 12", tipp: "Deftiges unter Gewölben." },
+            { name: "Augustiner an der Frauenkirche", adresse: "Rampische Str. 2 / am Neumarkt", tipp: "Hell oder Edelstoff." },
+            { name: "Sophienkeller im Taschenbergpalais", adresse: "Taschenberg 3", tipp: "Sächsische Klassiker im barocken Gewölbe." }
+        ];
+
+        // Die Firestore Collection/Document Pfade
+        const votingCollectionPath = `/artifacts/${appId}/public/data/gf_voting`;
+        const votingDocRef = doc(db, votingCollectionPath, 'voting_status');
+
+        // Funktion zum Aktualisieren der Anzeige
+        window.updateDisplay = function(votes) {
+            window.lokale.forEach(lokal => {
+                const key = window.generateKey(lokal.name);
+                const count = votes[key] !== undefined ? votes[key] : 0;
+                const span = document.getElementById(`stimmen_${key}`);
+                if (span) {
+                    span.textContent = count;
+                }
+            });
+        }
+
+        // Funktion zur Initialisierung der Tabelle und der Event Listener
+        window.initializeTable = function() {
+            const tbody = document.getElementById('lokalitaeten-body');
+            window.lokale.forEach(lokal => {
+                const key = window.generateKey(lokal.name);
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td><strong>${lokal.name}</strong></td>
+                    <td>${lokal.adresse}</td>
+                    <td>${lokal.tipp}</td>
+                    <td>
+                        <div class="abstimm-wrapper">
+                            <button class="abstimm-button" data-lokal-key="${key}">Abstimmen!</button>
+                            <span class="stimmen-anzahl" id="stimmen_${key}">0</span> Stimmen
+                        </div>
+                    </td>
+                `;
+            });
+
+            // Event Listener an alle Buttons hängen
+            document.querySelectorAll('.abstimm-button').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const key = e.target.getAttribute('data-lokal-key');
+                    window.handleVote(key, e.target);
+                });
+            });
+            document.getElementById('voting-table').style.display = 'table';
+            document.getElementById('loading-message').style.display = 'none';
+        }
+
+        // --- FIREBASE LOGIK ---
+
+        // Funktion zur Handhabung der Stimmabgabe
+        window.handleVote = async function(key, button) {
+            button.disabled = true;
+            try {
+                // Initialisiert/Update den Zähler mithilfe der increment-Funktion
+                await setDoc(votingDocRef, {
+                    [key]: increment(1)
+                }, { merge: true }); // merge: true stellt sicher, dass andere Zähler nicht überschrieben werden
+
+                window.showMessage("Ihre Stimme wurde erfolgreich gezählt. Die Anzeige aktualisiert sich in Echtzeit.", true);
+            } catch (error) {
+                console.error("Fehler beim Abstimmen:", error);
+                window.showMessage("Fehler: Stimme konnte nicht gespeichert werden. " + error.message, false);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // Start der Echtzeit-Überwachung (onSnapshot)
+        window.startRealtimeListener = function() {
+            onSnapshot(votingDocRef, (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    // Aktualisiere die Anzeige mit den aktuellen Daten
+                    window.updateDisplay(docSnapshot.data());
+                } else {
+                    // Wenn das Dokument nicht existiert (erster Aufruf), initialisieren wir es mit 0
+                    const initialVotes = {};
+                    window.lokale.forEach(lokal => {
+                        initialVotes[window.generateKey(lokal.name)] = 0;
+                    });
+                    setDoc(votingDocRef, initialVotes).catch(e => console.error("Initialisierungsfehler:", e));
+                }
+            }, (error) => {
+                console.error("Fehler beim Echtzeit-Listener:", error);
+                window.showMessage("Konnte keine Live-Verbindung zur Abstimmung aufbauen. Prüfen Sie die Internetverbindung.", false);
+            });
+        }
+
+
+        // Visuelles Feedback
+        window.showMessage = function(msg, isSuccess = true) {
+            const messageBox = document.getElementById('message-box');
+            messageBox.textContent = msg;
+            messageBox.style.backgroundColor = isSuccess ? '#4CAF50' : '#f44336';
+            messageBox.style.display = 'block';
+            setTimeout(() => {
+                messageBox.style.opacity = 1;
+            }, 10);
+            setTimeout(() => {
+                messageBox.style.opacity = 0;
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 500);
+            }, 3000);
+        }
+
+        // --- Start der Anwendung (Vereinfachte Auth für externes Hosting) ---
+        
+        // Initialisierungs-Listener, der wartet, bis die Anmeldung abgeschlossen ist
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // Benutzer ist angemeldet (anonym)
+                window.initializeTable();
+                window.startRealtimeListener(); // Starte den Echtzeit-Listener
+            } else {
+                // Wenn die Authentifizierung fehlschlägt, zeige eine Fehlermeldung
+                document.getElementById('loading-message').textContent = "Fehler: Anmeldung zur Datenbank fehlgeschlagen. Abstimmung nicht möglich.";
+                document.getElementById('loading-message').style.color = '#f44336';
+            }
+        });
+
+        // Startet die anonyme Anmeldung sofort
+        signInAnonymously(auth);
+    </script>
     <style>
         /* Basis-Styling */
         body {
@@ -214,9 +290,9 @@ $initial_votes = get_votes();
         .hinweis {
             margin-top: 30px;
             padding: 15px;
-            background-color: #fff3cd;
-            border: 1px solid #ffeeba;
-            color: #856404;
+            background-color: #d9edf7; /* Blau für Cloud-Speicherung */
+            border: 1px solid #bce8f1;
+            color: #31708f;
             border-radius: 5px;
             font-size: 0.9em;
         }
@@ -233,6 +309,12 @@ $initial_votes = get_votes();
             display: none;
             opacity: 0;
             transition: opacity 0.5s;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #5d4037;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -253,7 +335,9 @@ $initial_votes = get_votes();
 
     <h2>Abstimmung: Wo treffen sich die Ehemaligen Globalfoundries?</h2>
 
-    <table class="lokalitaeten-tabelle">
+    <div id="loading-message" class="loading">Lade Abstimmungsdaten und authentifiziere...</div>
+
+    <table class="lokalitaeten-tabelle" id="voting-table" style="display:none;">
         <thead>
             <tr>
                 <th>Lokalität</th>
@@ -263,13 +347,13 @@ $initial_votes = get_votes();
             </tr>
         </thead>
         <tbody id="lokalitaeten-body">
-            <!-- Die Zeilen werden durch JavaScript befüllt -->
+            <!-- Wird von JavaScript befüllt -->
         </tbody>
     </table>
 
     <div class="hinweis">
-        <strong>Wichtiger Hinweis zum Hosting:</strong>
-        Diese zentrale Abstimmfunktion funktioniert dank der PHP-Logik und der Datei `votes.json`. Stellen Sie sicher, dass die Datei `votes.json` im gleichen Ordner liegt und der Webserver Schreibrechte darauf hat (CHMOD 666 könnte nötig sein).
+        <strong>Wichtiger Hinweis zur Abstimmung:</strong>
+        Diese Webseite nutzt die **Google Firestore** Cloud-Datenbank für eine **globale, echtzeitfähige Abstimmung**. Alle Teilnehmer sehen denselben aktuellen Stand. Die Nutzung ist im Free-Tier von Firebase kostenlos.
     </div>
 
     <p style="margin-top: 30px; font-style: italic;">
@@ -278,138 +362,6 @@ $initial_votes = get_votes();
 </div>
 
 <div id="message-box" class="message-box"></div>
-
-<script>
-    document.addEventListener('DOMContentLoaded', () => {
-        const lokale = [
-            { name: "Altmarktkeller – Dresdner Bierhaus", adresse: "Altmarkt 4", tipp: "Keller- oder Schwarzbier." },
-            { name: "Watzke Brauereiausschank am Ring", adresse: "Dr.-Külz-Ring 9", tipp: "Hausgebrautes (Pils/Spezial)." },
-            { name: "Kutscherschänke", adresse: "Münzgasse 10", tipp: "Landbier; dazu z. B. Sauerbraten teilen." },
-            { name: "Hofbräu zur Frauenkirche", adresse: "Frauenstraße 16", tipp: "Helles/Weißbier (klein, wenn viele Stopps)." },
-            { name: "Freiberger Schankhaus", adresse: "Neumarkt 8", tipp: "Freiberger Pils/Schank." },
-            { name: "DRESDEN 1900 – Museumsgastronomie", adresse: "An der Frauenkirche 20", tipp: "„Dresdner Batzen“ oder Fassbier." },
-            { name: "Kurfürstenschänke anno 1708", adresse: "An der Frauenkirche 13", tipp: "Quarkkeulchen als süßer Snack." },
-            { name: "Pulverturm an der Frauenkirche", adresse: "An der Frauenkirche 12", tipp: "Deftiges unter Gewölben." },
-            { name: "Augustiner an der Frauenkirche", adresse: "Rampische Str. 2 / am Neumarkt", tipp: "Hell oder Edelstoff." },
-            { name: "Sophienkeller im Taschenbergpalais", adresse: "Taschenberg 3", tipp: "Sächsische Klassiker im barocken Gewölbe." }
-        ];
-
-        const tbody = document.getElementById('lokalitaeten-body');
-        const messageBox = document.getElementById('message-box');
-        let currentVotes = {}; // Speichert die aktuellen Zählerstände
-
-        // Hilfsfunktion zur Generierung des eindeutigen Schlüssels
-        const generateKey = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-        // Visuelles Feedback
-        function showMessage(msg, isSuccess = true) {
-            messageBox.textContent = msg;
-            messageBox.style.backgroundColor = isSuccess ? '#4CAF50' : '#f44336';
-            messageBox.style.display = 'block';
-            setTimeout(() => {
-                messageBox.style.opacity = 1;
-            }, 10);
-            setTimeout(() => {
-                messageBox.style.opacity = 0;
-                setTimeout(() => {
-                    messageBox.style.display = 'none';
-                }, 500);
-            }, 3000);
-        }
-
-        // Aktualisiert die Anzeige der Stimmen in der Tabelle
-        function updateDisplay(votes) {
-            currentVotes = votes;
-            lokale.forEach(lokal => {
-                const key = generateKey(lokal.name);
-                const count = votes[key] !== undefined ? votes[key] : 0;
-                const span = document.getElementById(`stimmen_${key}`);
-                if (span) {
-                    span.textContent = count;
-                }
-            });
-        }
-
-        // Füllt die Tabelle initial mit Daten (ohne Stimmen) und hängt Event Listener an
-        function initializeTable() {
-            lokale.forEach(lokal => {
-                const key = generateKey(lokal.name);
-
-                const row = tbody.insertRow();
-                row.innerHTML = `
-                    <td><strong>${lokal.name}</strong></td>
-                    <td>${lokal.adresse}</td>
-                    <td>${lokal.tipp}</td>
-                    <td>
-                        <div class="abstimm-wrapper">
-                            <button class="abstimm-button" data-lokal-key="${key}">Abstimmen!</button>
-                            <span class="stimmen-anzahl" id="stimmen_${key}">0</span> Stimmen
-                        </div>
-                    </td>
-                `;
-            });
-
-            // Event Listener an alle Buttons hängen
-            document.querySelectorAll('.abstimm-button').forEach(button => {
-                button.addEventListener('click', (e) => {
-                    const key = e.target.getAttribute('data-lokal-key');
-                    handleVote(key, e.target);
-                });
-            });
-        }
-
-        // Holt die initialen Stimmen beim Laden der Seite
-        function fetchInitialVotes() {
-            // Die PHP-Datei wird einfach ohne POST-Daten aufgerufen, um die Stimmen zu holen
-            fetch(window.location.href, {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' }
-            })
-            .then(response => response.json())
-            .then(data => {
-                // PHP liefert direkt die Daten, wenn es kein POST-Request ist
-                updateDisplay(data);
-            })
-            .catch(error => {
-                console.error("Fehler beim Laden der Stimmen:", error);
-                showMessage("Fehler beim Laden der Stimmen. Prüfen Sie die PHP-Einstellungen.", false);
-            });
-        }
-
-        // Verarbeitet die Stimmabgabe
-        function handleVote(key, button) {
-            button.disabled = true; // Button während des Requests deaktivieren
-
-            const formData = new FormData();
-            formData.append('vote_key', key);
-
-            fetch(window.location.href, { // Sendet POST an die gleiche Datei (index.php)
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    updateDisplay(data.votes);
-                    showMessage("Ihre Stimme wurde erfolgreich gezählt. Danke!");
-                } else {
-                    showMessage(`Fehler beim Abstimmen: ${data.message}`, false);
-                }
-            })
-            .catch(error => {
-                console.error("Fehler bei der Abstimmung:", error);
-                showMessage("Netzwerkfehler beim Abstimmen.", false);
-            })
-            .finally(() => {
-                button.disabled = false;
-            });
-        }
-
-        // Start der App
-        initializeTable();
-        fetchInitialVotes();
-    });
-</script>
 
 </body>
 </html>
