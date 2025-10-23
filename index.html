@@ -1,0 +1,415 @@
+<?php
+// -----------------------------------------------------------------------------
+// PHP-LOGIK FÜR ZENTRALE ABSTIMMUNG (READ/WRITE VON votes.json)
+// -----------------------------------------------------------------------------
+
+// Wichtig: Dateipfad für die Abstimmungsdaten (im gleichen Verzeichnis wie index.php)
+$data_file = 'votes.json';
+
+/**
+ * Definiert die anfängliche Datenstruktur. Die Schlüssel MÜSSEN mit der JS-Funktion
+ * generateKey() im HTML-Teil übereinstimmen.
+ */
+function initialize_data(): array {
+    return [
+        "altmarktkellerdresdnerbierhaus" => 0,
+        "watzkebrauereiausschankamring" => 0,
+        "kutscherschnke" => 0,
+        "hofbruzurfrauenkirche" => 0,
+        "freibergerschankhaus" => 0,
+        "dresden1900museumsgastronomie" => 0,
+        "kurfrstenschankeanno1708" => 0,
+        "pulverturmannderfrauenkirche" => 0,
+        "augustineranderfrauenkirche" => 0,
+        "sophienkellerimtaschenbergpalais" => 0,
+    ];
+}
+
+/**
+ * Liest die aktuellen Stimmen aus der JSON-Datei.
+ */
+function get_votes(): array {
+    global $data_file;
+    if (!file_exists($data_file) || filesize($data_file) === 0) {
+        return initialize_data();
+    }
+    $content = file_get_contents($data_file);
+    // Daten aus JSON lesen, bei Fehler initialisieren
+    $data = json_decode($content, true);
+    return is_array($data) ? $data : initialize_data();
+}
+
+/**
+ * Speichert die aktualisierten Stimmen in die JSON-Datei.
+ * Verwendet einen Dateilock, um gleichzeitige Schreibzugriffe zu verhindern.
+ */
+function save_votes(array $data): bool {
+    global $data_file;
+    $lock_file = $data_file . '.lock';
+    
+    // Versuche, eine exklusive Sperre zu erhalten
+    $fp = @fopen($lock_file, 'w');
+    if ($fp && flock($fp, LOCK_EX)) {
+        $result = file_put_contents($data_file, json_encode($data, JSON_PRETTY_PRINT));
+        flock($fp, LOCK_UN);
+        fclose($fp);
+        @unlink($lock_file); // Lock-Datei löschen
+        return $result !== false;
+    } else {
+        if ($fp) fclose($fp);
+        return false;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// API-Endpunkt für Votings
+// -----------------------------------------------------------------------------
+
+// Prüft, ob ein POST-Request für eine neue Stimme vorliegt.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['vote_key'])) {
+    header('Content-Type: application/json');
+
+    $vote_key = $_POST['vote_key'];
+    $votes = get_votes();
+
+    if (isset($votes[$vote_key])) {
+        $votes[$vote_key]++;
+        if (save_votes($votes)) {
+            echo json_encode(['success' => true, 'votes' => $votes]);
+        } else {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'message' => 'Speichern fehlgeschlagen. Prüfen Sie die Schreibrechte.']);
+        }
+    } else {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Ungültiger Abstimmungsschlüssel.']);
+    }
+    exit;
+}
+
+// Wenn kein POST-Request, hole die Initialdaten für die HTML-Anzeige.
+$initial_votes = get_votes();
+
+// -----------------------------------------------------------------------------
+// HTML-Ausgabe (Der PHP-Block wird hier beendet und die HTML-Ausgabe beginnt)
+// -----------------------------------------------------------------------------
+?>
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Treffen der Ehemaligen Globalfoundries: Lokalauswahl</title>
+    <style>
+        /* Basis-Styling */
+        body {
+            font-family: 'Georgia', serif; /* Etwas rustikalerer Look */
+            margin: 0;
+            padding: 20px;
+            background-color: #e8e8e8; /* Heller Hintergrund */
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+        h1 {
+            color: #A52A2A; /* Brauner Ton für Wärme */
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 5px;
+        }
+        h2 {
+            color: #5d4037;
+            margin-top: 20px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+        p {
+            line-height: 1.6;
+        }
+        ul {
+            list-style: disc inside;
+            padding-left: 20px;
+            margin: 15px 0;
+        }
+        ul li {
+            margin-bottom: 5px;
+        }
+
+        /* Styling der Tabelle (Liste der Lokale) */
+        .lokalitaeten-tabelle {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .lokalitaeten-tabelle th, .lokalitaeten-tabelle td {
+            border: 1px solid #ddd;
+            padding: 15px 10px;
+            text-align: left;
+            vertical-align: middle;
+        }
+        .lokalitaeten-tabelle th {
+            background-color: #5d4037; /* Dunkelbraun */
+            color: white;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .lokalitaeten-tabelle tr:nth-child(even) {
+            background-color: #f7f7f7;
+        }
+        /* Mobile Optimierung: Tabellenzellen anpassen */
+        @media (max-width: 700px) {
+            .lokalitaeten-tabelle th, .lokalitaeten-tabelle td {
+                padding: 8px 5px;
+                font-size: 0.85em;
+            }
+        }
+        @media (max-width: 500px) {
+            .lokalitaeten-tabelle td:nth-child(2), /* Adresse ausblenden */
+            .lokalitaeten-tabelle th:nth-child(2) {
+                display: none;
+            }
+        }
+
+
+        /* Styling für die Abstimmzelle */
+        .abstimm-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            white-space: nowrap; /* Verhindert Zeilenumbruch im Button-Bereich */
+        }
+        .abstimm-button {
+            background-color: #d35400; /* Orange/Rostrot */
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            font-size: 15px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .abstimm-button:hover {
+            background-color: #e67e22;
+        }
+        .abstimm-button:active {
+            transform: scale(0.98);
+        }
+        .stimmen-anzahl {
+            font-weight: bold;
+            color: #A52A2A;
+            min-width: 40px; /* Für einheitliches Layout */
+            text-align: right;
+            font-size: 1.1em;
+        }
+
+        /* Hinweis-Stil */
+        .hinweis {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .message-box {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Treffen der Ehemaligen Globalfoundries (Dresden)</h1>
+    <h2>10 Lokale zur Auswahl im Herzen Dresdens</h2>
+
+    <p>Herzlich willkommen, liebe ehemalige Globalfoundries-Kollegen! Der Ablauf für das Wiedersehen ist wie folgt geplant:</p>
+    <ul>
+        <li><strong>18:00 Uhr:</strong> Treffen auf dem Altmarkt (Weihnachtsmarkt).</li>
+        <li><strong>18:00 – ca. 20:00 Uhr:</strong> Gemeinsamer Besuch des Altmarkt-Weihnachtsmarktes (Glühwein, Bratwurst/Knoblauchbrot etc.).</li>
+        <li><strong>Ab 20:15 Uhr:</strong> Reservierung in einem der 10 Lokale (Abbruch zur Lokalität gegen 20:00 Uhr).</li>
+    </ul>
+
+    <p><strong>Stimmen Sie jetzt ab</strong>, um das Lokal festzulegen, in dem die Reservierung ab 20:15 Uhr erfolgen soll. Es wurden 10 großartige Lokale im historischen Zentrum Dresdens ausgewählt, die alle fußläufig zum Altmarkt liegen.</p>
+
+    <h2>Abstimmung: Wo treffen sich die Ehemaligen Globalfoundries?</h2>
+
+    <table class="lokalitaeten-tabelle">
+        <thead>
+            <tr>
+                <th>Lokalität</th>
+                <th>Adresse</th>
+                <th>Tipp (Getränk & Happen)</th>
+                <th>Abstimmung & Stand</th>
+            </tr>
+        </thead>
+        <tbody id="lokalitaeten-body">
+            <!-- Die Zeilen werden durch JavaScript befüllt -->
+        </tbody>
+    </table>
+
+    <div class="hinweis">
+        <strong>Wichtiger Hinweis zum Hosting:</strong>
+        Diese zentrale Abstimmfunktion funktioniert dank der PHP-Logik und der Datei `votes.json`. Stellen Sie sicher, dass die Datei `votes.json` im gleichen Ordner liegt und der Webserver Schreibrechte darauf hat (CHMOD 666 könnte nötig sein).
+    </div>
+
+    <p style="margin-top: 30px; font-style: italic;">
+        Diese 10 Lokale liegen alle zentral im Korridor Neumarkt ↔ Altmarkt. Stimmen Sie ab, um den passenden Treffpunkt für die abschließende Reservierung festzulegen! Prost! 🥂
+    </p>
+</div>
+
+<div id="message-box" class="message-box"></div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const lokale = [
+            { name: "Altmarktkeller – Dresdner Bierhaus", adresse: "Altmarkt 4", tipp: "Keller- oder Schwarzbier." },
+            { name: "Watzke Brauereiausschank am Ring", adresse: "Dr.-Külz-Ring 9", tipp: "Hausgebrautes (Pils/Spezial)." },
+            { name: "Kutscherschänke", adresse: "Münzgasse 10", tipp: "Landbier; dazu z. B. Sauerbraten teilen." },
+            { name: "Hofbräu zur Frauenkirche", adresse: "Frauenstraße 16", tipp: "Helles/Weißbier (klein, wenn viele Stopps)." },
+            { name: "Freiberger Schankhaus", adresse: "Neumarkt 8", tipp: "Freiberger Pils/Schank." },
+            { name: "DRESDEN 1900 – Museumsgastronomie", adresse: "An der Frauenkirche 20", tipp: "„Dresdner Batzen“ oder Fassbier." },
+            { name: "Kurfürstenschänke anno 1708", adresse: "An der Frauenkirche 13", tipp: "Quarkkeulchen als süßer Snack." },
+            { name: "Pulverturm an der Frauenkirche", adresse: "An der Frauenkirche 12", tipp: "Deftiges unter Gewölben." },
+            { name: "Augustiner an der Frauenkirche", adresse: "Rampische Str. 2 / am Neumarkt", tipp: "Hell oder Edelstoff." },
+            { name: "Sophienkeller im Taschenbergpalais", adresse: "Taschenberg 3", tipp: "Sächsische Klassiker im barocken Gewölbe." }
+        ];
+
+        const tbody = document.getElementById('lokalitaeten-body');
+        const messageBox = document.getElementById('message-box');
+        let currentVotes = {}; // Speichert die aktuellen Zählerstände
+
+        // Hilfsfunktion zur Generierung des eindeutigen Schlüssels
+        const generateKey = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // Visuelles Feedback
+        function showMessage(msg, isSuccess = true) {
+            messageBox.textContent = msg;
+            messageBox.style.backgroundColor = isSuccess ? '#4CAF50' : '#f44336';
+            messageBox.style.display = 'block';
+            setTimeout(() => {
+                messageBox.style.opacity = 1;
+            }, 10);
+            setTimeout(() => {
+                messageBox.style.opacity = 0;
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 500);
+            }, 3000);
+        }
+
+        // Aktualisiert die Anzeige der Stimmen in der Tabelle
+        function updateDisplay(votes) {
+            currentVotes = votes;
+            lokale.forEach(lokal => {
+                const key = generateKey(lokal.name);
+                const count = votes[key] !== undefined ? votes[key] : 0;
+                const span = document.getElementById(`stimmen_${key}`);
+                if (span) {
+                    span.textContent = count;
+                }
+            });
+        }
+
+        // Füllt die Tabelle initial mit Daten (ohne Stimmen) und hängt Event Listener an
+        function initializeTable() {
+            lokale.forEach(lokal => {
+                const key = generateKey(lokal.name);
+
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td><strong>${lokal.name}</strong></td>
+                    <td>${lokal.adresse}</td>
+                    <td>${lokal.tipp}</td>
+                    <td>
+                        <div class="abstimm-wrapper">
+                            <button class="abstimm-button" data-lokal-key="${key}">Abstimmen!</button>
+                            <span class="stimmen-anzahl" id="stimmen_${key}">0</span> Stimmen
+                        </div>
+                    </td>
+                `;
+            });
+
+            // Event Listener an alle Buttons hängen
+            document.querySelectorAll('.abstimm-button').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const key = e.target.getAttribute('data-lokal-key');
+                    handleVote(key, e.target);
+                });
+            });
+        }
+
+        // Holt die initialen Stimmen beim Laden der Seite
+        function fetchInitialVotes() {
+            // Die PHP-Datei wird einfach ohne POST-Daten aufgerufen, um die Stimmen zu holen
+            fetch(window.location.href, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                // PHP liefert direkt die Daten, wenn es kein POST-Request ist
+                updateDisplay(data);
+            })
+            .catch(error => {
+                console.error("Fehler beim Laden der Stimmen:", error);
+                showMessage("Fehler beim Laden der Stimmen. Prüfen Sie die PHP-Einstellungen.", false);
+            });
+        }
+
+        // Verarbeitet die Stimmabgabe
+        function handleVote(key, button) {
+            button.disabled = true; // Button während des Requests deaktivieren
+
+            const formData = new FormData();
+            formData.append('vote_key', key);
+
+            fetch(window.location.href, { // Sendet POST an die gleiche Datei (index.php)
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    updateDisplay(data.votes);
+                    showMessage("Ihre Stimme wurde erfolgreich gezählt. Danke!");
+                } else {
+                    showMessage(`Fehler beim Abstimmen: ${data.message}`, false);
+                }
+            })
+            .catch(error => {
+                console.error("Fehler bei der Abstimmung:", error);
+                showMessage("Netzwerkfehler beim Abstimmen.", false);
+            })
+            .finally(() => {
+                button.disabled = false;
+            });
+        }
+
+        // Start der App
+        initializeTable();
+        fetchInitialVotes();
+    });
+</script>
+
+</body>
+</html>
